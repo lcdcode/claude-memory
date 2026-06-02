@@ -1,5 +1,5 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# go-claude.sh — start postgres + ollama if needed, then launch claude in ~/projects.
+#!/usr/bin/bash
+# run-claude.sh — start postgres + ollama if needed, then launch claude in ~/projects.
 set -u
 
 PGDATA="$HOME/projects/pgdata"
