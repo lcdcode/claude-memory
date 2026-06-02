@@ -121,7 +121,7 @@ Register the server with your MCP client. For Claude Code (`.mcp.json`):
 ```
 
 The server speaks MCP over stdio; the client launches it on demand. Make sure PostgreSQL
-and Ollama are running first (see `go-claude.sh` for an idempotent launcher that starts
+and Ollama are running first (see `run-claude-example.sh` for an example launcher that starts
 both, then execs `claude`).
 
 ### Tools
