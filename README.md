@@ -81,6 +81,76 @@ ollama pull nomic-embed-text
 scripts/init_db.sh
 ```
 
+### First-time bootstrap on a fresh install
+
+On a clean PostgreSQL install, `scripts/init_db.sh` trips over two things before it can
+apply the schema. Both are one-time host setup, not bugs in the script.
+
+#### 1. Authentication (the password prompt)
+
+The script connects over TCP (`-h 127.0.0.1`), so PostgreSQL authenticates it using the
+`host` rules in `pg_hba.conf` - which on a fresh install demand a password
+(`scram-sha-256`), even if you never set one. A fresh cluster also only ships the
+`postgres` superuser, so the role the script wants (`PG_USER`, defaulting to your login
+name) does not exist yet.
+
+For a single-user dev box, create your role and switch localhost TCP to `trust`. DON'T do this on a shared machine or unsecured laptop:
+
+```sh
+# Create a login role with DB-creation rights (matches PG_USER default of $(whoami))
+sudo -u postgres createuser --createdb --login "$(whoami)"
+
+# Find pg_hba.conf
+sudo -u postgres psql -tAc 'SHOW hba_file;'
+```
+
+Edit that file and change the method (last column) on the two localhost `host` lines from
+`scram-sha-256` (or `md5`) to `trust`, then reload:
+
+```
+host    all    all    127.0.0.1/32    trust
+host    all    all    ::1/128         trust
+```
+
+```sh
+sudo systemctl reload postgresql   # or: sudo -u postgres pg_ctl reload
+```
+
+Then set `PG_USER` in `.env` to that role and leave `PG_PASSWORD` empty.
+
+> `trust` means any local account can connect as any role with no credentials. Fine for a
+> personal dev machine; on a shared or exposed host, keep password auth and set
+> `PG_PASSWORD` in `.env` instead.
+
+#### 2. The `vector` extension needs a superuser
+
+`sql/schema.sql` runs `CREATE EXTENSION vector`. `pg_trgm` is a trusted extension (a DB
+owner can create it), but **pgvector is not trusted, so creating it requires a
+superuser** - your `--createdb` role will fail on that line.
+
+First make sure the pgvector package is installed for the cluster:
+
+```sh
+sudo apt install postgresql-$(pg_config --version | grep -oE '[0-9]+' | head -1)-pgvector
+# (package name varies by distro; e.g. `pgvector` on Arch, build from source elsewhere)
+```
+
+Then have the superuser create the database and both extensions once. After that the
+`CREATE EXTENSION IF NOT EXISTS` lines in the schema become no-ops and need no special
+privilege:
+
+```sh
+sudo -u postgres createdb -O "$(whoami)" claude_memory
+sudo -u postgres psql -d claude_memory \
+   -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+
+# Now the schema applies cleanly as your normal role
+scripts/init_db.sh
+```
+
+Alternatively, for a throwaway local box, grant your role superuser and let the script do
+everything itself: `sudo -u postgres psql -c 'ALTER ROLE "<user>" SUPERUSER;'`.
+
 ### Configuration (`.env`)
 
 | Variable | Default | Purpose |
