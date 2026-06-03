@@ -2,17 +2,25 @@
 # run-claude.sh — start postgres + ollama if needed, then launch claude in ~/projects.
 set -u
 
-PGDATA="$HOME/projects/pgdata"
-PGLOG="$PGDATA/logfile"
+PG_PORT="${PG_PORT:-5432}"
 OLLAMA_LOG="$HOME/projects/claude-memory/ollama.log"
 
 start_postgres() {
-    if pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
+    if pg_isready -q -h 127.0.0.1 -p "$PG_PORT"; then
         echo "[postgres] already running"
         return 0
     fi
     echo "[postgres] starting..."
-    pg_ctl -D "$PGDATA" -l "$PGLOG" -w start
+    # Debian/Ubuntu run postgres as a managed system cluster, not a user PGDATA dir.
+    sudo pg_ctlcluster 15 main start || sudo systemctl start postgresql
+    for i in $(seq 1 20); do
+        if pg_isready -q -h 127.0.0.1 -p "$PG_PORT"; then
+            echo "[postgres] ready"
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "[postgres] WARNING: postgres not ready on :$PG_PORT" >&2
 }
 
 start_ollama() {
@@ -30,7 +38,7 @@ start_ollama() {
         fi
         sleep 0.5
     done
-    echo "[ollama] WARNING: did not respond within 10s — check $OLLAMA_LOG" >&2
+    echo "[ollama] WARNING: did not respond within 10s - check $OLLAMA_LOG" >&2
 }
 
 start_postgres
