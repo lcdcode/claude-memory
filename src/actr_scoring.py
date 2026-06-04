@@ -16,6 +16,12 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+# Access age is measured in this many seconds per unit before applying power-law decay.
+# 86400 = 1 day. Using raw seconds (a unit of 1) mis-calibrates the base-level thresholds
+# in forgetting.py (0 / -2): a single-access memory would cross into "forgotten" after only
+# ~55 seconds. A day-scale unit lines the thresholds up with a human memory timescale.
+DEFAULT_TIME_UNIT_SECONDS = 86400.0
+
 
 @dataclass
 class ACTRConfig:
@@ -24,6 +30,7 @@ class ACTRConfig:
     sigma: float = 1.2      # Noise std dev (0 = deterministic)
     tau: float = -2.0       # Retrieval threshold
     S: float = 2.0          # Max associative strength
+    time_unit_seconds: float = DEFAULT_TIME_UNIT_SECONDS  # base-level recency unit
     use_spreading: bool = True
     use_noise: bool = True
     prefetch_limit: int = 50
@@ -51,6 +58,7 @@ class ACTRConfig:
             sigma=_float("ACTR_NOISE_SIGMA", "1.2", 0.0, 5.0),
             tau=_float("ACTR_THRESHOLD_TAU", "-2.0", -10.0, 10.0),
             S=_float("ACTR_SPREADING_S", "2.0", 0.0, 10.0),
+            time_unit_seconds=_float("ACTR_TIME_UNIT_SECONDS", "86400", 1.0, 31536000.0),
             use_spreading=os.getenv("ACTR_USE_SPREADING", "true").lower() == "true",
             use_noise=os.getenv("ACTR_USE_NOISE", "true").lower() == "true",
             prefetch_limit=_int("ACTR_PREFETCH_LIMIT", "50", 1, 10000),
@@ -62,8 +70,14 @@ def compute_base_level(
     access_timestamps: list[datetime],
     created_at: datetime,
     d: float = 0.5,
+    time_unit_seconds: float = DEFAULT_TIME_UNIT_SECONDS,
 ) -> float:
-    """B(m) = ln(Sum_i (t_now - t_i)^(-d))"""
+    """B(m) = ln(Sum_i ((t_now - t_i) / time_unit)^(-d))
+
+    Access age is divided by time_unit_seconds (default 1 day) before decay, so the
+    base-level thresholds in forgetting.py are calibrated to a human timescale rather than
+    to raw seconds. See DEFAULT_TIME_UNIT_SECONDS.
+    """
     now = datetime.now(timezone.utc)
     timestamps = list(access_timestamps) if access_timestamps else []
     if not timestamps:
@@ -73,8 +87,8 @@ def compute_base_level(
     for ts in timestamps:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        delta_seconds = max((now - ts).total_seconds(), 1.0)
-        total += delta_seconds ** (-d)
+        delta = max((now - ts).total_seconds(), 1.0) / time_unit_seconds
+        total += delta ** (-d)
 
     if total <= 0:
         return -10.0
@@ -188,7 +202,7 @@ def score_and_rank_memories(
         cosine_sim = float(row.get("sim", 0.0))
         memory_tags = row.get("tags") or []
 
-        B = compute_base_level(access_ts, created_at, config.d)
+        B = compute_base_level(access_ts, created_at, config.d, config.time_unit_seconds)
         S_val = 0.0
         if config.use_spreading and query_tags:
             S_val = compute_spreading_activation(

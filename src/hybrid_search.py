@@ -23,11 +23,11 @@ def build_search_queries(
 ) -> tuple[str, list, str, list]:
     """Build parallel SQL queries for vector and trigram search."""
 
-    def _build_filters(param_offset: int) -> tuple[str, list]:
+    def _build_filters(param_offset: int, exclude_forgotten: bool) -> tuple[str, list]:
         clauses = []
         params = []
 
-        if not include_forgotten:
+        if exclude_forgotten:
             clauses.append("(memory_status IS NULL OR memory_status != 'forgotten')")
 
         if user_id:
@@ -51,8 +51,11 @@ def build_search_queries(
             where = "AND " + " AND ".join(clauses)
         return where, params
 
-    # Vector query: $1=embedding, $2=min_sim, $3=limit
-    vec_where, vec_filter_params = _build_filters(param_offset=3)
+    # Vector query: $1=embedding, $2=min_sim, $3=limit.
+    # Forgotten rows stay eligible here so a strongly-relevant memory can be rescued by
+    # semantic similarity (the ACT-R tau threshold and min_similarity floor still gate it).
+    # The caller promotes any surfaced forgotten row back out of 'forgotten' on return.
+    vec_where, vec_filter_params = _build_filters(param_offset=3, exclude_forgotten=False)
     vector_sql = f"""
         SELECT
             id, content, summary, category, tags,
@@ -68,8 +71,12 @@ def build_search_queries(
     """
     vector_params = [embedding_str, min_similarity, prefetch] + vec_filter_params
 
-    # Trigram query: $1=query_text, $2=embedding, $3=limit
-    trgm_where, trgm_filter_params = _build_filters(param_offset=3)
+    # Trigram query: $1=query_text, $2=embedding, $3=limit.
+    # Lexical overlap alone should not resurrect a forgotten memory, so this branch keeps
+    # excluding them unless the caller explicitly asked to include forgotten rows.
+    trgm_where, trgm_filter_params = _build_filters(
+        param_offset=3, exclude_forgotten=not include_forgotten
+    )
     trigram_sql = f"""
         SELECT
             id, content, summary, category, tags,

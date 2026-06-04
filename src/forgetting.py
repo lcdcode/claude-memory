@@ -48,7 +48,11 @@ async def run_forgetting_cycle(pool, config: ACTRConfig | None = None) -> str:
                 FOR UPDATE
             """)
 
-            updates = {"active": [], "dormant": [], "forgotten": []}
+            # Persist activation for every memory, not just rows that change status, so
+            # memory_stats (AVG actr_activation) reflects the whole store. Re-writing the
+            # same status for an unchanged row is a harmless no-op; counters below still
+            # report only genuine transitions.
+            all_updates = []
 
             for row in rows:
                 access_ts = row["access_timestamps"] or []
@@ -56,26 +60,27 @@ async def run_forgetting_cycle(pool, config: ACTRConfig | None = None) -> str:
                 if created_at and created_at.tzinfo is None:
                     created_at = created_at.replace(tzinfo=timezone.utc)
 
-                base_level = compute_base_level(access_ts, created_at, config.d)
+                base_level = compute_base_level(
+                    access_ts, created_at, config.d, config.time_unit_seconds
+                )
                 new_status = classify_memory_status(base_level)
                 old_status = row["memory_status"]
 
+                all_updates.append((new_status, base_level, now, row["id"]))
+
                 if old_status != new_status:
-                    updates[new_status].append((row["id"], base_level))
                     counters[new_status] += 1
                 else:
                     counters["unchanged"] += 1
 
-            for status, memory_list in updates.items():
-                if not memory_list:
-                    continue
+            if all_updates:
                 await conn.executemany("""
                     UPDATE memories
                     SET memory_status = $1,
                         actr_activation = $2,
                         activation_updated_at = $3
                     WHERE id = $4
-                """, [(status, act, now, mid) for mid, act in memory_list])
+                """, all_updates)
 
     total = sum(counters.values())
     return (

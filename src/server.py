@@ -224,12 +224,15 @@ async def retrieve_memories(
                 fused.sort(key=lambda r: r["sim"] * r["importance_score"], reverse=True)
                 final_rows = fused[:max_results]
 
-            # Update access timestamps
+            # Update access timestamps. Retrieval counts as a rehearsal, so any returned
+            # memory is promoted back to 'active' - this is what lets a dormant or
+            # semantically-rescued forgotten memory recover instead of decaying one-way.
             ids = [row["id"] for row in final_rows]
             await conn.execute("""
                 UPDATE memories
                 SET last_accessed_at = NOW(),
                     access_count = access_count + 1,
+                    memory_status = 'active',
                     access_timestamps = (
                         CASE
                             WHEN array_length(COALESCE(access_timestamps, '{}'), 1) >= 1000
