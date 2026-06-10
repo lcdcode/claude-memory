@@ -152,6 +152,7 @@ async def retrieve_memories(
     tags: list[str] = None,
     project: str = None,
     include_forgotten: bool = False,
+    show_ids: bool = False,
 ) -> str:
     """Search memories semantically (hybrid vector + trigram search with ACT-R scoring).
 
@@ -163,6 +164,8 @@ async def retrieve_memories(
         tags: Filter by tags
         project: Filter by project
         include_forgotten: Include forgotten memories (default false)
+        show_ids: Include each memory's UUID in the output (default false). Enable
+            when you need a handle to pass to delete_memory.
     """
     max_results = max(1, min(100, max_results))
     min_similarity = max(0.0, min(1.0, min_similarity))
@@ -254,11 +257,12 @@ async def retrieve_memories(
             project_info = ""
             if row.get("project_context"):
                 project_info = f"\nProject: {row['project_context']}"
+            id_info = f"\nID: {row['id']}" if show_ids else ""
             results.append(f"""
 ---
 **[{row['category']}]** (similarity: {row['sim']:.2f}, importance: {row['importance_score']:.1f}{activation_info}{rrf_info})
 {row['content']}
-Tags: {', '.join(row['tags']) if row['tags'] else 'none'}{project_info}
+Tags: {', '.join(row['tags']) if row['tags'] else 'none'}{project_info}{id_info}
 """)
 
         return f"## {len(final_rows)} memory(ies) found:\n" + "\n".join(results)
@@ -274,6 +278,7 @@ async def list_memories(
     category: str = None,
     tags: list[str] = None,
     project: str = None,
+    show_ids: bool = False,
 ) -> str:
     """List recent memories.
 
@@ -282,6 +287,8 @@ async def list_memories(
         category: Filter by category
         tags: Filter by tags
         project: Filter by project
+        show_ids: Include each memory's UUID in the output (default false). Enable
+            when you need a handle to pass to delete_memory.
     """
     limit = max(1, min(100, limit))
     if category and category not in VALID_CATEGORIES:
@@ -326,8 +333,9 @@ async def list_memories(
         for row in rows:
             project_info = f" | project: {row['project_context']}" if row.get("project_context") else ""
             status = f" [{row['memory_status']}]" if row.get("memory_status") and row["memory_status"] != "active" else ""
+            id_info = f"`{row['id']}` " if show_ids else ""
             results.append(
-                f"- **{row['category']}**{status} | {row['summary'][:80]}... | "
+                f"- {id_info}**{row['category']}**{status} | {row['summary'][:80]}... | "
                 f"importance: {row['importance_score']:.1f} | accessed: {row['access_count']}x{project_info}"
             )
 
